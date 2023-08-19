@@ -2,8 +2,13 @@ from datetime import datetime, timedelta
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, status, Form
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from jose import jwt
+from fastapi.security import (
+    OAuth2PasswordBearer,
+    OAuth2PasswordRequestForm,
+    HTTPBearer,
+    HTTPAuthorizationCredentials,
+)
+from jose import JWTError, jwt
 from passlib.context import CryptContext
 
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,22 +23,10 @@ models.Base.metadata.create_all(bind=engine)
 from dotenv import load_dotenv
 import os
 
-### ENV ###
-
-load_dotenv()
-
-SECRET_KEY = os.environ.get("SECRET_KEY")
-ALGORITHM = os.environ.get("ALGORITHM")
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
-
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
-
 app = FastAPI()
 
 
+# Dependencies
 def get_db():
     db = SessionLocal()
     try:
@@ -41,6 +34,20 @@ def get_db():
     finally:
         db.close()
 
+
+http_bearer = HTTPBearer()
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+### ENV ###
+
+load_dotenv()
+
+SECRET_KEY = os.environ.get("SECRET_KEY")
+ALGORITHM = os.environ.get("ALGORITHM")
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 # Allowing access from localhost frontend
 origins = ["http://localhost:5173"]
@@ -51,6 +58,32 @@ app.add_middleware(
     allow_headers=["*"],
     allow_credentials=True,
 )
+
+
+### AUTHENTICATE A USER ###
+async def validate_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(http_bearer),
+    db: Session = Depends(get_db),
+):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid authentication credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    token = credentials.credentials
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        id = int(payload.get("sub"))
+        if id is None:
+            raise credentials_exception
+        token_data = schemas.TokenData(id=id)
+    except JWTError:
+        raise credentials_exception
+    user = db.query(models.User).filter(models.User.id == token_data.id).first()
+    if user is None:
+        raise credentials_exception
+    return user
+
 
 ### CREATE A NEW USER ###
 
@@ -64,6 +97,25 @@ def get_user_by_username(db: Session, username: str):
 
 
 @app.post("/newuser", response_model=schemas.User)
+async def create_user(
+    username: Annotated[str, Form()],
+    password: Annotated[str, Form()],
+    current_user: Annotated[models.User, Depends(validate_current_user)],
+    db: Session = Depends(get_db),
+):
+    db_user = get_user_by_username(db, username)
+    if db_user:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    hashed_password = get_password_hash(password)
+    db_user = models.User(username=username, hashed_password=hashed_password)
+    db.add(db_user)
+    db.commit()
+    db.refresh(db_user)
+    return db_user
+
+
+### Need to make a way to add someone without being authorized! ###
+@app.post("/firstuser", response_model=schemas.User)
 async def create_user(
     username: Annotated[str, Form()],
     password: Annotated[str, Form()],
@@ -111,6 +163,7 @@ def authenticate_user(db: Session, username: str, password: str):
     return user
 
 
+# * the value of "sub" needs to be a string, or jwt.decode will fail
 @app.post("/token", response_model=schemas.Token)
 async def login_for_access_token(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
@@ -125,7 +178,8 @@ async def login_for_access_token(
         )
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": user.username}, expires_delta=access_token_expires
+        data={"sub": str(user.id)}, expires_delta=access_token_expires
     )
 
+    ## UPDATE USER WITH ACCESS TOKEN, THEN RETURN THE USER AND INCLUDE IN THE REUTURN OBJECT
     return {"access_token": access_token, "token_type": "bearer"}

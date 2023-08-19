@@ -11,6 +11,7 @@ class User(BaseModel):
 
 class UserInDB(User):
     hashed_password: str
+    user_auth_token: str | None = None
 
 
 class Token(BaseModel):
@@ -19,4 +20,4 @@ class Token(BaseModel):
 
 
 class TokenData(BaseModel):
-    username: str | None = None
+    id: int | None = None
