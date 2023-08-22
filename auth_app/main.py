@@ -8,10 +8,12 @@ from fastapi.security import (
     HTTPBearer,
     HTTPAuthorizationCredentials,
 )
+from fastapi.middleware.cors import CORSMiddleware
+
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 
-from fastapi.middleware.cors import CORSMiddleware
+import json
 
 from sqlalchemy.orm import Session
 from . import models, schemas
@@ -75,8 +77,41 @@ async def validate_current_user(
     token = credentials.credentials
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        id = int(payload.get("sub"))
+        user_id_role = payload.get("sub")
+        user_id_role_dict = json.loads(user_id_role)
+        id = user_id_role_dict["id"]
+        role = user_id_role_dict["role"]
         if id is None:
+            raise credentials_exception
+        token_data = schemas.TokenData(id=id)
+    except JWTError:
+        raise credentials_exception
+    user = db.query(models.User).filter(models.User.id == token_data.id).first()
+    if user is None:
+        raise credentials_exception
+    return user
+
+
+### AUTHENTICATE AN ADMIN ###
+async def validate_current_admin(
+    credentials: HTTPAuthorizationCredentials = Depends(http_bearer),
+    db: Session = Depends(get_db),
+):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid authentication credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    token = credentials.credentials
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id_role = payload.get("sub")
+        user_id_role_dict = json.loads(user_id_role)
+        id = user_id_role_dict["id"]
+        role = user_id_role_dict["role"]
+        if id is None:
+            raise credentials_exception
+        if role != "admin":
             raise credentials_exception
         token_data = schemas.TokenData(id=id)
     except JWTError:
@@ -102,14 +137,15 @@ def get_user_by_username(db: Session, username: str):
 async def create_user(
     username: Annotated[str, Form()],
     password: Annotated[str, Form()],
-    current_user: Annotated[models.User, Depends(validate_current_user)],
+    role: Annotated[str, Form()],
+    current_user: Annotated[models.User, Depends(validate_current_admin)],
     db: Session = Depends(get_db),
 ):
     db_user = get_user_by_username(db, username)
     if db_user:
         raise HTTPException(status_code=400, detail="Email already registered")
     hashed_password = get_password_hash(password)
-    db_user = models.User(username=username, hashed_password=hashed_password)
+    db_user = models.User(username=username, hashed_password=hashed_password, role=role)
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
@@ -127,7 +163,9 @@ async def create_user(
     if db_user:
         raise HTTPException(status_code=400, detail="Email already registered")
     hashed_password = get_password_hash(password)
-    db_user = models.User(username=username, hashed_password=hashed_password)
+    db_user = models.User(
+        username=username, hashed_password=hashed_password, role="admin"
+    )
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
@@ -179,9 +217,11 @@ async def login_for_access_token(
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    user_id_role = {"id": user.id, "role": user.role}
+    sub_json = json.dumps(user_id_role)
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": str(user.id)}, KEY=SECRET_KEY, expires_delta=access_token_expires
+        data={"sub": sub_json}, KEY=SECRET_KEY, expires_delta=access_token_expires
     )
 
     ## REFRESH TOKEN
@@ -200,6 +240,7 @@ async def login_for_access_token(
     return {
         "access_token": access_token,
         "refresh_token": refresh_token,
+        "role": user.role,
         "token_type": "bearer",
     }
 
@@ -226,10 +267,11 @@ async def use_refresh_token(
             detail="Refresh token didn't match",
             headers={"WWW-Authenticate": "Bearer"},
         )
-
+    user_id_role = {"id": user.id, "role": user.role}
+    sub_json = json.dumps(user_id_role)
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": str(user.id)}, KEY=SECRET_KEY, expires_delta=access_token_expires
+        data={"sub": sub_json}, KEY=SECRET_KEY, expires_delta=access_token_expires
     )
     return {
         "access_token": access_token,
