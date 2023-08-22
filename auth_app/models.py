@@ -12,3 +12,4 @@ class User(Base):
     username = Column(String, unique=True, index=True)
     hashed_password = Column(String)
     user_auth_token = Column(String)
+    user_refresh_token = Column(String)
