@@ -153,7 +153,7 @@ async def create_user(
 
 
 ### Need to make a way to add someone without being authorized! ###
-@app.post("/firstuser", response_model=schemas.User)
+@app.post("/seedauthadmin", response_model=schemas.User)
 async def create_user(
     username: Annotated[str, Form()],
     password: Annotated[str, Form()],
@@ -285,3 +285,28 @@ async def logout(refresh_token: Annotated[str, Form()], db: Session = Depends(ge
     user.user_auth_token = None
     user.user_refresh_token = None
     db.commit()
+
+
+@app.post("/csvusers/", response_model=list[schemas.ReturnCSVUser])
+async def create_csv_users(
+    userAuthList: list[schemas.CSVUser],
+    current_user: Annotated[models.User, Depends(validate_current_admin)],
+    db: Session = Depends(get_db),
+):
+    for user in userAuthList:
+        db_user = get_user_by_username(db, user.username)
+        if db_user:
+            user.id = db_user.id
+        else:
+            user.hashed_password = get_password_hash(user.password)
+            newUser = models.User(
+                username=user.username,
+                hashed_password=user.hashed_password,
+                role=user.role,
+            )
+            db.add(newUser)
+            db.commit()
+            db.refresh(newUser)
+            user.id = newUser.id
+
+    return userAuthList

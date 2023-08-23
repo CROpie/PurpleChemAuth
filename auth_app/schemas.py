@@ -33,3 +33,16 @@ class InRefreshToken(BaseModel):
 class ReturnToken(BaseModel):
     access_token: str
     token_type: str
+
+
+class CSVUser(BaseModel):
+    id: int | None = None
+    username: str
+    role: str
+    password: str
+    hashed_password: str | None = None
+
+
+class ReturnCSVUser(BaseModel):
+    id: int
+    username: str
