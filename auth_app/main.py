@@ -53,8 +53,12 @@ ALGORITHM = os.environ.get("ALGORITHM")
 ACCESS_TOKEN_EXPIRE_MINUTES = 45
 REFRESH_TOKEN_EXPIRE_HOURS = 24
 
-# Allowing access from localhost frontend
-origins = ["http://localhost:5173"]
+
+origins = [
+    "http://localhost:5173",
+    "https://purple-chem.vercel.app/",
+    "https://purple-chem-updated.vercel.app/",
+]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -310,3 +314,13 @@ async def create_csv_users(
             user.id = newUser.id
 
     return userAuthList
+
+
+@app.get("/getusers/", response_model=list[schemas.ReturnCSVUser])
+def get_users(
+    current_user: Annotated[models.User, Depends(validate_current_admin)],
+    db: Session = Depends(get_db),
+):
+    usersList = db.query(models.User).all()
+    data = usersList
+    return data
