@@ -56,8 +56,8 @@ REFRESH_TOKEN_EXPIRE_HOURS = 24
 
 origins = [
     "http://localhost:5173",
-    "https://purple-chem.vercel.app/",
-    "https://purple-chem-updated.vercel.app/",
+    "https://purple-chem.vercel.app",
+    "https://purple-chem-updated.vercel.app",
 ]
 app.add_middleware(
     CORSMiddleware,
